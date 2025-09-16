@@ -136,3 +136,27 @@ if __name__ == "__main__":
         json.dump(leaves, f, indent=2)
 
     print("Mapping and leaves extracted successfully!")
+
+# import pandas as pd
+
+# def process_excel(file_path):
+#     # Read starting from row 2 (Excel row 3) and only 2nd & 3rd columns
+#     df = pd.read_excel(
+#         file_path,
+#         sheet_name="Message Response",
+#         skiprows=2,      # skip first 2 rows (row 0 and row 1)
+#         usecols=[1, 2],  # 2nd and 3rd cols (B, C in Excel)
+#         dtype=str
+#     ).fillna("")
+
+#     # Rename for clarity
+#     df.columns = ["Response Element Name", "Type"]
+
+#     # Convert to list of tuples
+#     rows = list(zip(df["Response Element Name"], df["Type"]))
+
+#     # Call your existing parsing logic
+#     mapping, leaves = parse_rows(rows)
+
+#     return mapping, leaves
+
