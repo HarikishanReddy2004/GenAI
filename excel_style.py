@@ -1,9 +1,12 @@
 import re
-from collections import OrderedDict
 import json
 import pandas as pd
+from collections import OrderedDict
+
+# ---------------- Helper Functions ----------------
 
 def count_level(s: str) -> int:
+    """Count '>' depth from element column."""
     if s is None or not str(s).strip():
         return 0
     m = re.match(r'^\s*(>+)', str(s))
@@ -20,6 +23,12 @@ def extract_after_colon(s: str) -> str:
     return s.strip()
 
 def parse_rows(rows):
+    """
+    rows: list of tuples (element_raw, type_raw)
+    Returns:
+      mapping (OrderedDict) - hierarchical structure
+      all_leaves (list) - flattened leaves
+    """
     n = len(rows)
     i = 0
     result = OrderedDict()
@@ -35,21 +44,25 @@ def parse_rows(rows):
                 break
             if lvl == base_level + 1:
                 name = extract_after_colon(elem_raw)
+                # has nested children
                 if idx + 1 < n and count_level(rows[idx+1][0]) > lvl:
                     nested_list, new_idx = parse_children(idx + 1, lvl)
                     children.append({name: nested_list})
                     idx = new_idx
                 else:
                     children.append(name)
+                    if name not in all_leaves:
+                        all_leaves.append(name)
                     idx += 1
             else:
+                # malformed deeper line → skip
                 idx += 1
         return children, idx
 
     while i < n:
         elem_raw, type_raw = rows[i]
         lvl = count_level(elem_raw)
-        if lvl != 0:
+        if lvl != 0:  # only process top-level (no arrows)
             i += 1
             continue
 
@@ -57,28 +70,18 @@ def parse_rows(rows):
         top_type = extract_after_colon(type_raw) if type_raw else top_elem
 
         if i + 1 < n and count_level(rows[i+1][0]) > 0:
-            children_list, next_i = parse_children(i+1, 0)
+            children_list, next_i = parse_children(i + 1, 0)
             od = OrderedDict()
             for ch in children_list:
                 if isinstance(ch, str):
-                    od[ch] = None
+                    od[ch] = None  # we will clean later
                 elif isinstance(ch, dict):
                     for k, v in ch.items():
                         od[k] = v
             result[top_type] = od
-
-            def collect_leaves_from_list(lst):
-                for item in lst:
-                    if isinstance(item, str):
-                        if item not in all_leaves:
-                            all_leaves.append(item)
-                    elif isinstance(item, dict):
-                        for nk, nv in item.items():
-                            collect_leaves_from_list(nv)
-            collect_leaves_from_list(children_list)
             i = next_i
         else:
-            result[top_type] = top_elem
+            result[top_type] = None
             if top_elem not in all_leaves:
                 all_leaves.append(top_elem)
             i += 1
@@ -86,33 +89,44 @@ def parse_rows(rows):
     return result, all_leaves
 
 def mapping_to_jsonable(mapping):
-    out = {}
+    """Convert OrderedDict structure into JSON-able with correct rules (no nulls)."""
+    out = OrderedDict()
     for top, children in mapping.items():
-        if isinstance(children, str):
-            out[top] = children
-        else:
-            conv = {}
+        if children is None:
+            # leaf at top
+            out[top] = None
+        elif isinstance(children, OrderedDict):
+            conv = OrderedDict()
             for k, v in children.items():
-                conv[k] = v
+                if v is None:
+                    conv[k] = None  # we keep just the key in JSON
+                else:
+                    conv[k] = v
             out[top] = conv
+        else:
+            out[top] = children
     return out
 
-def process_excel(file_path):
+# ---------------- Main Excel Processing ----------------
+
+def process_excel(file_path, sheet_name="Message Response"):
+    # Read starting from row 3, cols B & C
     df = pd.read_excel(
         file_path,
-        sheet_name="Message Response",
-        skiprows=2,      # start at Excel row 3
-        usecols=[1, 2],  # B, C columns
+        sheet_name=sheet_name,
+        skiprows=2,
+        usecols=[1, 2],
         dtype=str
     ).fillna("")
+    df.columns = ["Element", "Type"]
 
-    df.columns = ["Response Element Name", "Type"]
-    rows = list(zip(df["Response Element Name"], df["Type"]))
-    return parse_rows(rows)
+    rows = list(zip(df["Element"], df["Type"]))
+    mapping, leaves = parse_rows(rows)
+    return mapping, leaves
 
 # ---------------- Example Usage ----------------
 if __name__ == "__main__":
-    excel_file = "account_list.xlsx"   # your input file
+    excel_file = "account_list.xlsx"
     mapping, leaves = process_excel(excel_file)
 
     # Save hierarchical mapping
