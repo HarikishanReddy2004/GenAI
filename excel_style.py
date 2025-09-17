@@ -1,12 +1,12 @@
+# parse_account_list_final.py
 import re
+import os
 import json
-import pandas as pd
 from collections import OrderedDict
 
-# ---------------- Helper Functions ----------------
+import pandas as pd
 
 def count_level(s: str) -> int:
-    """Count '>' depth from element column."""
     if s is None or not str(s).strip():
         return 0
     m = re.match(r'^\s*(>+)', str(s))
@@ -22,119 +22,161 @@ def extract_after_colon(s: str) -> str:
         return s.split(':')[-1].strip()
     return s.strip()
 
+def _parse_children(rows, start_idx, base_level):
+    """
+    Parse children starting at start_idx where children have indentation level base_level+1.
+    Returns (children_list, next_index).
+    children_list uses elements:
+      - string => leaf child
+      - dict {childName: [ ... ]} => child with nested children (list may contain strings or dicts)
+    """
+    n = len(rows)
+    children = []
+    idx = start_idx
+    while idx < n:
+        elem_raw, _ = rows[idx]
+        lvl = count_level(elem_raw)
+        if lvl <= base_level:
+            break
+        if lvl == base_level + 1:
+            name = extract_after_colon(elem_raw)
+            # if this child has deeper descendants
+            if (idx + 1) < n and count_level(rows[idx + 1][0]) > lvl:
+                nested, new_idx = _parse_children(rows, idx + 1, lvl)
+                children.append({name: nested})
+                idx = new_idx
+            else:
+                children.append(name)
+                idx += 1
+        else:
+            # deeper indentation without proper parent -> skip safely
+            idx += 1
+    return children, idx
+
 def parse_rows(rows):
     """
-    rows: list of tuples (element_raw, type_raw)
+    rows: list of tuples (element_raw, type_raw) in sheet order.
     Returns:
-      mapping (OrderedDict) - hierarchical structure
-      all_leaves (list) - flattened leaves
+      - top_entries: ordered list of ("leaf", name) or ("mapping", key, children_list)
+      - leaves: ordered unique list of leaf names
     """
     n = len(rows)
     i = 0
-    result = OrderedDict()
-    all_leaves = []
+    top_entries = []   # preserve original order: ('leaf', name) or ('mapping', key, children_list)
+    seen = set()
+    leaves = []
 
-    def parse_children(start_idx, base_level):
-        children = []
-        idx = start_idx
-        while idx < n:
-            elem_raw, _ = rows[idx]
-            lvl = count_level(elem_raw)
-            if lvl <= base_level:
-                break
-            if lvl == base_level + 1:
-                name = extract_after_colon(elem_raw)
-                # has nested children
-                if idx + 1 < n and count_level(rows[idx+1][0]) > lvl:
-                    nested_list, new_idx = parse_children(idx + 1, lvl)
-                    children.append({name: nested_list})
-                    idx = new_idx
-                else:
-                    children.append(name)
-                    if name not in all_leaves:
-                        all_leaves.append(name)
-                    idx += 1
-            else:
-                # malformed deeper line → skip
-                idx += 1
-        return children, idx
+    def collect_leaves_from_items(items):
+        for it in items:
+            if isinstance(it, str):
+                if it not in seen:
+                    seen.add(it); leaves.append(it)
+            elif isinstance(it, dict):
+                for nk, nv in it.items():
+                    collect_leaves_from_items(nv)
 
     while i < n:
         elem_raw, type_raw = rows[i]
+        # skip blank element names
+        if not elem_raw or not str(elem_raw).strip():
+            i += 1
+            continue
+
         lvl = count_level(elem_raw)
-        if lvl != 0:  # only process top-level (no arrows)
+        if lvl != 0:
+            # mis-indented top-level row: skip (child rows are handled via parent's parse)
             i += 1
             continue
 
         top_elem = extract_after_colon(elem_raw)
-        top_type = extract_after_colon(type_raw) if type_raw else top_elem
-
-        if i + 1 < n and count_level(rows[i+1][0]) > 0:
-            children_list, next_i = parse_children(i + 1, 0)
-            od = OrderedDict()
-            for ch in children_list:
-                if isinstance(ch, str):
-                    od[ch] = None  # we will clean later
-                elif isinstance(ch, dict):
-                    for k, v in ch.items():
-                        od[k] = v
-            result[top_type] = od
-            i = next_i
+        # Decide based on next row
+        if (i + 1) < n:
+            next_lvl = count_level(rows[i + 1][0])
         else:
-            result[top_type] = None
-            if top_elem not in all_leaves:
-                all_leaves.append(top_elem)
+            next_lvl = -1
+
+        # Case: next row also top-level -> current is a standalone leaf
+        if next_lvl == 0:
+            top_entries.append(('leaf', top_elem))
+            if top_elem not in seen:
+                seen.add(top_elem); leaves.append(top_elem)
             i += 1
+            continue
 
-    return result, all_leaves
+        # Case: next row is indented -> current's TYPE becomes the mapping key
+        if next_lvl > 0:
+            # Use type column's right-side as key; fallback to top_elem if type empty
+            key = extract_after_colon(type_raw) if (type_raw and str(type_raw).strip()) else top_elem
+            children_list, next_i = _parse_children(rows, i + 1, 0)
+            top_entries.append(('mapping', key, children_list))
+            # collect leaves from this subtree
+            collect_leaves_from_items(children_list)
+            i = next_i
+            continue
 
-def mapping_to_jsonable(mapping):
-    """Convert OrderedDict structure into JSON-able with correct rules (no nulls)."""
-    out = OrderedDict()
-    for top, children in mapping.items():
-        if children is None:
-            # leaf at top
-            out[top] = None
-        elif isinstance(children, OrderedDict):
-            conv = OrderedDict()
-            for k, v in children.items():
-                if v is None:
-                    conv[k] = None  # we keep just the key in JSON
-                else:
-                    conv[k] = v
-            out[top] = conv
+        # Case: last row (no next) -> standalone
+        top_entries.append(('leaf', top_elem))
+        if top_elem not in seen:
+            seen.add(top_elem); leaves.append(top_elem)
+        i += 1
+
+    return top_entries, leaves
+
+def format_item_compact(item):
+    """Return compact string for a child item (string or {k:[..]}). No quotes, no nulls."""
+    if isinstance(item, str):
+        return item
+    elif isinstance(item, dict):
+        # single-key dict
+        for k, v in item.items():
+            inner = ",".join(format_item_compact(x) for x in v)
+            return "{" + f"{k}:[{inner}]" + "}"
+    return ""
+
+def build_compact_text(top_entries):
+    parts = []
+    for ent in top_entries:
+        if ent[0] == 'leaf':
+            parts.append(ent[1])
         else:
-            out[top] = children
-    return out
+            # ('mapping', key, children)
+            key = ent[1]
+            children = ent[2]
+            children_str = ",".join(format_item_compact(ch) for ch in children)
+            parts.append("{" + f"{key}:{{" + children_str + "}" + "}}")
+    return "{" + ",".join(parts) + "}"
 
-# ---------------- Main Excel Processing ----------------
+# ---------- Excel reading + main ----------
 
-def process_excel(file_path, sheet_name="Message Response"):
-    # Read starting from row 3, cols B & C
+def process_excel(file_path):
+    _, ext = os.path.splitext(file_path)
+    engine = None
+    if ext.lower() == ".xls":
+        engine = "xlrd"  # ensure xlrd==1.2.0 installed for .xls
+
     df = pd.read_excel(
         file_path,
-        sheet_name=sheet_name,
-        skiprows=2,
-        usecols=[1, 2],
-        dtype=str
+        sheet_name="Message Response",
+        skiprows=2,      # start at Excel row 3 (0-based skiprows)
+        usecols=[1, 2],  # B and C columns (Response Element Name, Type)
+        dtype=str,
+        engine=engine
     ).fillna("")
-    df.columns = ["Element", "Type"]
 
-    rows = list(zip(df["Element"], df["Type"]))
-    mapping, leaves = parse_rows(rows)
-    return mapping, leaves
+    df.columns = ["Response Element Name", "Type"]
+    rows = list(zip(df["Response Element Name"], df["Type"]))
+    top_entries, leaves = parse_rows(rows)
+    return top_entries, leaves
 
-# ---------------- Example Usage ----------------
 if __name__ == "__main__":
-    excel_file = "account_list.xlsx"
-    mapping, leaves = process_excel(excel_file)
+    excel_file = "account_list.xlsx"   # change to your file (xls/xlsx)
+    top_entries, leaves = process_excel(excel_file)
 
-    # Save hierarchical mapping
-    with open("final_mapping.json", "w") as f:
-        json.dump(mapping_to_jsonable(mapping), f, indent=2)
+    # Write compact mapping text exactly in the format you requested (no : null)
+    compact_str = build_compact_text(top_entries)
+    with open("final_mapping_compact.txt", "w", encoding="utf-8") as f:
+        f.write(compact_str)
 
-    # Save flat leaf list
-    with open("final_leaves.json", "w") as f:
+    # Write final leaves (flat list)
+    with open("final_leaves.json", "w", encoding="utf-8") as f:
         json.dump(leaves, f, indent=2)
-
-    print("Mapping and leaves extracted successfully!")
