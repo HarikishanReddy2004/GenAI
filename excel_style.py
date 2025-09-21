@@ -180,3 +180,129 @@ if __name__ == "__main__":
     # Write final leaves (flat list)
     with open("final_leaves.json", "w", encoding="utf-8") as f:
         json.dump(leaves, f, indent=2)
+
+
+import re
+import json
+import pandas as pd
+
+# ---------------- Utilities ----------------
+
+def count_level(s: str) -> int:
+    """Count leading > characters (indentation level)."""
+    if s is None or not str(s).strip():
+        return 0
+    m = re.match(r'^\s*(>+)', str(s))
+    return len(m.group(1)) if m else 0
+
+def clean_name(s: str) -> str:
+    """Remove > and namespace, keep only name after last ':'."""
+    if s is None:
+        return ""
+    t = str(s).strip()
+    t = re.sub(r'^\s*>+\s*', '', t)   # remove leading > 
+    if ':' in t:
+        t = t.split(':')[-1]
+    return t.strip().lower()
+
+def clean_type(t: str) -> str:
+    """Clean type: only take part after last ':' (or None if empty)."""
+    if t is None or not str(t).strip():
+        return None
+    tt = str(t).strip()
+    if ':' in tt:
+        tt = tt.split(':')[-1]
+    return tt.strip().lower()
+
+# ---------------- Core structure builder ----------------
+
+def build_structure(rows, start=0, level=0):
+    result = {}
+    i = start
+    n = len(rows)
+
+    while i < n:
+        elem_raw, _ = rows[i]
+        lvl = count_level(elem_raw)
+
+        if lvl < level:
+            break
+
+        if lvl == level:
+            name = clean_name(elem_raw)
+            next_lvl = count_level(rows[i+1][0]) if (i+1) < n else -1
+
+            if next_lvl > level:
+                children, new_i = build_structure(rows, i+1, level+1)
+                result[name] = children
+                i = new_i
+                continue
+            else:
+                result[name] = []
+        i += 1
+
+    return result, i
+
+def process_dataframe(df):
+    # remove rows where both columns are empty
+    df = df.dropna(how="all")
+    df = df[(df["Response Element Name"].astype(str).str.strip() != "") | 
+            (df["Type"].astype(str).str.strip() != "")]
+    
+    rows = list(zip(df["Response Element Name"], df["Type"]))
+    
+    # mapping
+    mapping = {}
+    for elem_raw, type_raw in rows:
+        key = clean_name(elem_raw)
+        mapping[key] = clean_type(type_raw)
+
+    # structure
+    structure, _ = build_structure(rows, start=0, level=0)
+    return mapping, structure
+
+# ---------------- Extract leaf data fields ----------------
+
+def extract_datafields(structure):
+    """Return list of all keys that map to [] (leaf data fields)."""
+    fields = []
+
+    def dfs(node):
+        for k, v in node.items():
+            if v == []:
+                fields.append(k)
+            elif isinstance(v, dict):
+                dfs(v)
+
+    dfs(structure)
+    return fields
+
+# ---------------- Batch processing ----------------
+
+def process_files(excel_files, mapping_files, datafield_files):
+    for xlsx, jfile, tfile in zip(excel_files, mapping_files, datafield_files):
+        print(f"Processing {xlsx} → {jfile}, {tfile}")
+
+        df = pd.read_excel(xlsx, sheet_name=0, usecols=[0,1], header=None)
+        df.columns = ["Response Element Name", "Type"]
+
+        mapping, structure = process_dataframe(df)
+        datafields = extract_datafields(structure)
+
+        # dump mapping.json
+        with open(jfile, "w") as f:
+            json.dump(mapping, f, indent=2)
+
+        # dump datafields.txt
+        with open(tfile, "w") as f:
+            f.write("\n".join(datafields))
+
+        print(f"Done: {xlsx}")
+
+# ---------------- Example Usage ----------------
+if __name__ == "__main__":
+    a = ["abc.xlsx", "def.xlsx"]      # Excel input list
+    b = ["hai.json", "hello.json"]    # Mapping JSON output list
+    c = ["hai.txt", "hello.txt"]      # Datafields TXT output list
+
+    process_files(a, b, c)
