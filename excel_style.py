@@ -306,3 +306,121 @@ if __name__ == "__main__":
     c = ["hai.txt", "hello.txt"]      # Datafields TXT output list
 
     process_files(a, b, c)
+
+
+import re
+import json
+import pandas as pd
+from typing import List, Tuple, Dict, Any
+
+# ---------- Utilities ----------
+
+def count_level(s: str) -> int:
+    """Count leading '>' or '/' characters (indentation level)."""
+    if s is None:
+        return 0
+    s = str(s)
+    m = re.match(r'^\s*([>/]+)', s)
+    return len(m.group(1)) if m else 0
+
+def clean_name(s: str) -> str:
+    """
+    Remove leading '>' or '/' and keep the text AFTER the last ':' (if present).
+    Return lowercased trimmed name.
+    """
+    if s is None:
+        return ""
+    t = str(s).strip()
+    t = re.sub(r'^\s*[>/]+\s*', '', t)   # strip leading arrows/slashes
+    if ':' in t:
+        t = t.split(':')[-1]
+    return t.strip().lower()
+
+def clean_type(t: str) -> str:
+    """Return type (right of colon) or None if empty."""
+    if t is None or str(t).strip() == "":
+        return None
+    tt = str(t).strip()
+    if ':' in tt:
+        tt = tt.split(':')[-1]
+    return tt.strip().lower()
+
+# ---------- Structure builder (recursive) ----------
+
+def parse_structure(rows: List[Tuple[str, str]], start: int = 0, base_level: int = 0) -> Tuple[Dict[str, Any], int]:
+    """
+    Parse rows into nested dict where leaves are empty lists.
+    rows: list of tuples (element_raw, type_raw) in original order.
+    Returns: (mapping_dict_at_this_level, next_index_to_process)
+    """
+    n = len(rows)
+    i = start
+    result: Dict[str, Any] = {}
+
+    while i < n:
+        elem_raw, _ = rows[i]
+        lvl = count_level(elem_raw)
+
+        # If we've gone up to a previous level, return to caller
+        if lvl < base_level:
+            break
+
+        if lvl == base_level:
+            name = clean_name(elem_raw)
+
+            # Lookahead to decide if this node has children
+            next_lvl = count_level(rows[i+1][0]) if (i + 1) < n else -1
+
+            if next_lvl > base_level:
+                # parse children at next level
+                children_dict, next_i = parse_structure(rows, i + 1, base_level + 1)
+                result[name] = children_dict
+                i = next_i
+                continue
+            else:
+                # no children -> leaf (empty list)
+                result[name] = []
+        # else lvl > base_level should not happen (handled by recursion)
+        i += 1
+
+    return result, i
+
+# ---------- Mapping builder (element -> type) ----------
+
+def build_mapping(rows: List[Tuple[str, str]]) -> Dict[str, Any]:
+    mapping: Dict[str, Any] = {}
+    for elem_raw, type_raw in rows:
+        if elem_raw is None or str(elem_raw).strip() == "":
+            continue
+        name = clean_name(elem_raw)
+        typ = clean_type(type_raw)
+        mapping[name] = typ if typ is not None else None
+    return mapping
+
+# ---------- Main / Example ----------
+
+if __name__ == "__main__":
+    # Example you provided (3 rows)
+    data = [
+        ["vdvbhbd:a", "xsd:string"],
+        ["vd shdk:b", "djbvkj:btype"],
+        [">dvhbdhvdh:c", "xsd:string"]
+    ]
+
+    rows = data  # if you read from Excel, make rows = df[["Response Element Name","Type"]].values.tolist()
+
+    # Build mapping (element -> type)
+    mapping_json = build_mapping(rows)
+
+    # Build hierarchical structure from Response Element Name only
+    structure_dict, _ = parse_structure(rows, start=0, base_level=0)
+
+    # Print results
+    print("Mapping (element -> type):")
+    print(json.dumps(mapping_json, indent=2))
+    print("\nStructure:")
+    print(json.dumps(structure_dict, indent=2))
+
+    # Expected:
+    # mapping_json -> {"a":"string","b":"btype","c":"string"}
+    # structure_dict -> {"a": [], "b": {"c": []}}
