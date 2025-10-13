@@ -120,3 +120,47 @@ def main():
 
 if __name__ == "__main__":
     main()
+def resolve_lkpath(base_path, lkpath):
+    """
+    Resolve lkpath according to rules:
+      - Given lkpath parts = [p0, p1, ..., pn]
+      - Check base/p0, if exists then final = base/p0/p1/.../pn => check final.gts / final.tsq
+      - If base/p0 does NOT exist, check base/p1, if exists then final = base/p1/p2/.../pn => check final.gts / final.tsq
+      - Continue this way. If some base/px exists, we always append remaining parts AFTER px to form final path.
+      - If no base/px exists for any px then it's an error (no candidate found).
+    Returns tuple: (final_candidate_path, found_type, missing_part)
+      - found_type: "gts" | "tsq" | "error"
+      - missing_part: last missing path segment (for error reporting) or None
+    """
+    parts = [p for p in lkpath.split('/') if p]  # remove empty parts
+    if not parts:
+        return (os.path.join(base_path, lkpath), "error", "empty_lkpath")
+
+    # Try each segment as candidate root under base_path
+    for i, seg in enumerate(parts):
+        candidate_root = os.path.join(base_path, seg)
+        if os.path.exists(candidate_root):
+            # We found a starting segment at index i.
+            # Build the full path from this found point to the end of parts
+            remaining = parts[i+1:]  # parts after the found segment
+            # final path starts at candidate_root, then append remaining parts
+            final_path_no_ext = os.path.join(candidate_root, *remaining) if remaining else candidate_root
+
+            # Check for .gts or .tsq files (file names expected to be the final segment base name)
+            gts_path = final_path_no_ext + ".gts"
+            tsq_path = final_path_no_ext + ".tsq"
+
+            if os.path.exists(gts_path):
+                return (gts_path, "gts", None)
+            if os.path.exists(tsq_path):
+                return (tsq_path, "tsq", None)
+
+            # If neither file exists, this is an error: final candidate missing the extension
+            # We report the last segment that couldn't be resolved into a .gts/.tsq file
+            missing_part = os.path.basename(final_path_no_ext)
+            return (final_path_no_ext, "error", missing_part)
+
+    # If loop completes, none of the segments were found directly under base_path
+    # This is an error — nothing matched as a candidate root
+    # Report the first segment as the initial clue or the whole lkpath as missing
+    return (os.path.join(base_path, *parts), "error", parts[-1])
