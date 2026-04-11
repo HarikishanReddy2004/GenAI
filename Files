@@ -1,0 +1,185 @@
+from utils.logger import get_logger
+from utils.config_loader import load_json
+
+logger = get_logger("PolicyLookup")
+
+
+class PolicyLookup:
+
+    def __init__(self):
+        try:
+            self.lookup_table = load_json("lookup_table.json")
+            logger.info("Policy lookup table loaded")
+        except Exception as e:
+            logger.exception("Failed to load lookup table")
+            raise
+
+    def enrich(self, policies: list):
+
+        enriched = []
+
+        for policy in policies:
+            code = policy.get("policyCode")
+
+            match = next(
+                (row for row in self.lookup_table if row.get("policyCode") == code),
+                None
+            )
+
+            if match:
+                enriched_policy = {
+                    "policyCode": code,
+                    "description": match.get("policyDescription"),
+                    "category": match.get("policyCategory"),
+                    "type": match.get("policyType"),
+                }
+                enriched.append(enriched_policy)
+            else:
+                logger.warning(f"No lookup found for policy {code}")
+
+        logger.info(f"Enriched policies: {enriched}")
+        return enriched
+
+
+from utils.logger import get_logger
+from utils.config_loader import load_json
+
+logger = get_logger("PolicyExecution")
+
+
+class PolicyExecution:
+
+    def __init__(self):
+        self.execution_table = load_json("execution_table.json")
+
+    def apply(self, policies: list, data: dict):
+
+        executed = []
+
+        for policy in policies:
+            code = policy.get("policyCode")
+
+            matches = [
+                row for row in self.execution_table
+                if row.get("policyCode") == code
+            ]
+
+            for row in matches:
+                # NOTE: ignoring highValueInd etc for now (can extend later)
+
+                executed_policy = {
+                    **policy,
+                    "status": row.get("policyStatus"),
+                    "rank": row.get("policyRank"),
+                    "reasonCode": row.get("policyRsnCode")
+                }
+
+                executed.append(executed_policy)
+
+        logger.info(f"Executed policies: {executed}")
+        return executed
+
+
+def deduplicate(policies: list):
+
+    seen = set()
+    unique = []
+
+    for p in policies:
+        key = (p["policyCode"], p["status"])
+
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+
+    return unique
+
+
+def sort_by_rank(policies: list):
+
+    return sorted(policies, key=lambda x: x.get("rank", 99999))
+
+
+
+from utils.constants import DecisionStatus
+
+class DecisionEngine:
+
+    def decide(self, policies: list):
+
+        statuses = [p.get("status") for p in policies]
+
+        if "DCL" in statuses:
+            return DecisionStatus.DECLINE
+
+        elif "FAL" in statuses:
+            return DecisionStatus.FAIL
+
+        elif "RVW" in statuses:
+            return DecisionStatus.REVIEW
+
+        return DecisionStatus.PASS
+import uuid
+
+def format_output(decision, policies):
+
+    return {
+        "decision": decision,
+        "policies": policies,
+        "reasonCodes": [
+            p.get("reasonCode") for p in policies if p.get("reasonCode")
+        ],
+        "traceId": str(uuid.uuid4())
+    }
+
+
+from engine.input_processor import InputProcessor
+from engine.derived_fields import DerivedFields
+from engine.policy_engine.policy2 import Policy2Engine
+from engine.lookup.policy_lookup import PolicyLookup
+from engine.execution.policy_execution import PolicyExecution
+from engine.execution.deduplication import deduplicate
+from engine.execution.sorting import sort_by_rank
+from engine.decision.decision_engine import DecisionEngine
+from engine.output_formatter import format_output
+
+
+class EngineRunner:
+
+    def run(self, request_json):
+
+        # Step 1: Input processing
+        processor = InputProcessor()
+        data = processor.process(request_json)
+
+        # Step 2: Derived fields
+        derived = DerivedFields()
+        data = derived.process(data)
+
+        # Step 3: Policy rules
+        policy_engine = Policy2Engine()
+        policies = policy_engine.evaluate(data)
+
+        # Step 4: Lookup
+        lookup = PolicyLookup()
+        policies = lookup.enrich(policies)
+
+        # Step 5: Execution (rank/status)
+        execution = PolicyExecution()
+        policies = execution.apply(policies, data)
+
+        # Step 6: Dedup
+        policies = deduplicate(policies)
+
+        # Step 7: Sort
+        policies = sort_by_rank(policies)
+
+        # Step 8: Decision
+        decision_engine = DecisionEngine()
+        decision = decision_engine.decide(policies)
+
+        # Step 9: Format output
+        return format_output(decision, policies)
+
+
+
