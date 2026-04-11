@@ -1,0 +1,62 @@
+from utils.logger import get_logger
+from utils.constants import UNAVAILABLE_VALUES
+from utils.exceptions import DataValidationError
+from utils.config_loader import load_json
+
+logger = get_logger("DerivedFields")
+
+
+class DerivedFields:
+
+    def __init__(self):
+        try:
+            # Load lending table config
+            self.lending_table = load_json("lending_tables.json")
+            logger.info("Lending table loaded successfully")
+
+        except Exception as e:
+            logger.exception("Failed to load lending tables")
+            raise
+
+    def is_valid(self, val):
+        return val not in UNAVAILABLE_VALUES
+
+    def get_lending_area_ind(self, state):
+
+        try:
+            # Default
+            lending_area_ind = 0
+
+            if not self.is_valid(state):
+                logger.warning("State is invalid or unavailable")
+                return lending_area_ind
+
+            for row in self.lending_table:
+                if row.get("addressSubdivisionOneText") == state:
+                    lending_area_ind = row.get("lendingAreaInd", 0)
+                    logger.info(f"State {state} found → lendingAreaInd = {lending_area_ind}")
+                    return lending_area_ind
+
+            logger.info(f"State {state} not found → default lendingAreaInd = 0")
+            return lending_area_ind
+
+        except Exception as e:
+            logger.exception("Error in lending area calculation")
+            raise DataValidationError("Failed to compute lendingAreaInd")
+
+    def process(self, data: dict) -> dict:
+
+        try:
+            logger.info("Calculating derived fields")
+
+            state = data.get("state")
+
+            data["lendingAreaInd"] = self.get_lending_area_ind(state)
+
+            logger.debug(f"Derived fields added: lendingAreaInd = {data['lendingAreaInd']}")
+
+            return data
+
+        except Exception as e:
+            logger.exception("Error in derived fields processing")
+            raise
