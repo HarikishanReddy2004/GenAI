@@ -60,3 +60,95 @@ class DerivedFields:
         except Exception as e:
             logger.exception("Error in derived fields processing")
             raise
+
+
+
+
+from utils.logger import get_logger
+from utils.constants import UNAVAILABLE_VALUES
+from utils.exceptions import RuleEvaluationError
+
+logger = get_logger("Policy1Engine")
+
+
+class Policy1Engine:
+
+    def __init__(self):
+        self.policies_triggered = []
+
+    def is_valid(self, val):
+        return val not in UNAVAILABLE_VALUES
+
+    def trigger_policy(self, code):
+        logger.info(f"Policy1 Triggered: {code}")
+        self.policies_triggered.append({"policyCode": code})
+
+    def evaluate(self, data: dict):
+
+        try:
+            logger.info("Starting Policy 1 Evaluation")
+
+            lending = data.get("lendingAreaInd")
+
+            # -------------------------
+            # prec61b - Non-US State
+            # -------------------------
+            if self.is_valid(lending) and lending == 0:
+                self.trigger_policy(61)
+
+            logger.info(f"Policy1 Output: {self.policies_triggered}")
+
+            return self.policies_triggered
+
+        except Exception as e:
+            logger.exception("Error evaluating Policy1")
+            raise RuleEvaluationError("Policy1 evaluation failed")
+
+
+policy1 = Policy1Engine()
+p1 = policy1.evaluate(data)
+
+policy2 = Policy2Engine()
+p2 = policy2.evaluate(data)
+
+policies = p1 + p2
+
+
+from engine.policy_engine.policy1 import Policy1Engine
+from engine.policy_engine.policy2 import Policy2Engine
+from engine.lookup.policy_lookup import PolicyLookup
+from engine.execution.policy_execution import PolicyExecution
+
+...
+
+# Step 3: Policy1
+policy1 = Policy1Engine()
+p1 = policy1.evaluate(data)
+
+# Step 4: Lookup (for Policy1)
+lookup = PolicyLookup()
+p1 = lookup.enrich(p1)
+
+# Step 5: Execution (for Policy1)
+execution = PolicyExecution()
+p1_exec = execution.apply(p1, data)
+
+#RITICAL CHECK
+has_fal = any(p.get("status") == "FAL" for p in p1_exec)
+
+if has_fal:
+    logger.info("FAL detected → Skipping Policy2")
+    policies = p1_exec
+
+else:
+    logger.info("No FAL → Proceeding to Policy2")
+
+    policy2 = Policy2Engine()
+    p2 = policy2.evaluate(data)
+
+    p2 = lookup.enrich(p2)
+    p2_exec = execution.apply(p2, data)
+
+    policies = p1_exec + p2_exec
+
+
