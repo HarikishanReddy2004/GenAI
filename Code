@@ -1,97 +1,52 @@
 from utils.logger import get_logger
 from utils.constants import UNAVAILABLE_VALUES
-from utils.exceptions import RuleEvaluationError
 
 logger = get_logger("Policy1Engine")
 
 
 class Policy1Engine:
 
-    def __init__(self):
-        self.policies_triggered = []
-
     def is_valid(self, val):
         return val not in UNAVAILABLE_VALUES
 
-    def trigger_policy(self, code, rule_id):
-        logger.info(f"Policy1 Triggered: {code} via {rule_id}")
-        self.policies_triggered.append({
+    def trigger(self, policies, code, rule):
+        logger.info(f"Policy1 Triggered: {code} via {rule}")
+        policies.append({
             "policyCode": code,
-            "ruleId": rule_id
+            "rule": rule
         })
 
-    def evaluate(self, data: dict):
+    def evaluate(self, data):
 
-        try:
-            logger.info("Starting Policy1 (PreQual) Evaluation")
+        policies = []
 
-            ext = data.get("externalStatusCode")
-            ext_rsn = data.get("externalStatusReasonCode")
-            acc_transfer = data.get("accountTransferCode")
+        ext = data.get("externalStatusCode")
+        reason = data.get("externalStatusReasonCode")
+        transfer = data.get("accountTransferCode")
 
-            # -------------------------
-            # Rule 21 - A-15 Unauthorized
-            # -------------------------
-            if (
-                self.is_valid(ext)
-                and self.is_valid(ext_rsn)
-                and ext == "A"
-                and ext_rsn == 15
-            ):
-                self.trigger_policy(21, "prec21")
+        # prec21
+        if self.is_valid(ext) and self.is_valid(reason) and ext == "A" and reason == 15:
+            self.trigger(policies, 21, "prec21")
 
-            # -------------------------
-            # Rule 26 - A-63 Payment Plan
-            # -------------------------
-            if (
-                self.is_valid(ext)
-                and self.is_valid(ext_rsn)
-                and ext == "A"
-                and ext_rsn == 63
-            ):
-                self.trigger_policy(26, "prec26")
+        # prec26
+        if self.is_valid(ext) and self.is_valid(reason) and ext == "A" and reason == 63:
+            self.trigger(policies, 26, "prec26")
 
-            # -------------------------
-            # Rule 41 - Account Transfer
-            # -------------------------
-            if (
-                self.is_valid(acc_transfer)
-                and acc_transfer in [1, 3]
-            ):
-                self.trigger_policy(41, "prec41")
+        # prec41
+        if self.is_valid(transfer) and transfer in [1, 3]:
+            self.trigger(policies, 41, "prec41")
 
-            # -------------------------
-            # Rule 46 - Auth Prohibited
-            # -------------------------
-            if (
-                self.is_valid(ext)
-                and ext == "A"
-                and (
-                    not self.is_valid(ext_rsn)
-                    or ext_rsn not in [15, 38, 63]
-                )
-            ):
-                self.trigger_policy(46, "prec46")
+        # prec46
+        if self.is_valid(ext) and ext == "A" and (
+            not self.is_valid(reason) or reason not in [15, 38, 63]
+        ):
+            self.trigger(policies, 46, "prec46")
 
-            # -------------------------
-            # Rule 51 - Lost/Stolen
-            # -------------------------
-            if (
-                self.is_valid(ext)
-                and ext in ["L", "U"]
-            ):
-                self.trigger_policy(51, "prec51")
+        # prec51
+        if self.is_valid(ext) and ext in ["L", "U"]:
+            self.trigger(policies, 51, "prec51")
 
-            logger.info(f"Policy1 Output: {self.policies_triggered}")
-
-            return self.policies_triggered
-
-        except Exception as e:
-            logger.exception("Error evaluating Policy1 rules")
-            raise RuleEvaluationError("Policy1 evaluation failed")
-
-
-
+        return policies
 
 
 
@@ -99,271 +54,196 @@ from datetime import datetime
 from utils.logger import get_logger
 from utils.constants import UNAVAILABLE_VALUES
 
-logger = get_logger("Policy2Calculations")
+logger = get_logger("Policy2Engine")
 
 
-class Policy2Calculations:
+class Policy2Engine:
 
-    def __init__(self):
-        pass
+    def __init__(self, lending_table):
+        self.lending_table = lending_table
 
     def is_valid(self, val):
         return val not in UNAVAILABLE_VALUES
 
-    def calculate_days(self, decision_date, change_date):
+    def trigger(self, policies, code, rule):
+        logger.info(f"Policy2 Triggered: {code} via {rule}")
+        policies.append({
+            "policyCode": code,
+            "rule": rule
+        })
+
+    def calculate_days(self, d1, d2):
         try:
-            d1 = datetime.strptime(decision_date, "%Y-%m-%d")
-            d2 = datetime.strptime(change_date, "%Y-%m-%d")
+            d1 = datetime.strptime(d1, "%Y-%m-%d")
+            d2 = datetime.strptime(d2, "%Y-%m-%d")
             return (d1 - d2).days
-        except Exception:
+        except:
             return -999
 
-    def compute(self, data: dict):
+    def evaluate(self, data):
 
-        logger.info("Starting Policy2 Calculations")
+        policies = []
 
-        # Default values
-        data["daysSncAnyCLD"] = -999
-        data["daysSncAnyLineChange"] = -999
-        data["daysSncAnyCLI"] = -999
-        data["lineChgDelta"] = 0
+        ext = data.get("externalStatusCode")
+        reason = data.get("externalStatusReasonCode")
+        internal = data.get("internalStatusCode")
 
-        # Only for RCLI requested account
-        if not data.get("rcliRequested"):
-            logger.info("Skipping calculations - not RCLI requested account")
-            return data
+        # =========================
+        # 🔥 61a (CALC)
+        # =========================
+        lendingAreaInd = 0
+        state = data.get("addressSubdivisionOneText")
 
-        decision_date = data.get("decisionDate")
-        change_date = data.get("creditLineChangeDate")
-        change_code = data.get("creditLineChangeCode")
+        if self.is_valid(state):
+            for row in self.lending_table:
+                if row["addressSubdivisionOneText"] == state:
+                    lendingAreaInd = row["lendingAreaInd"]
+                    break
 
-        credit_limit = data.get("creditLimitAmount")
-        change_amount = data.get("creditLineChangeAmount")
+        data["lendingAreaInd"] = lendingAreaInd
 
-        # -------------------------
-        # PREC 4 - daysSncAnyCLD
-        # -------------------------
-        if (
-            self.is_valid(change_date)
-            and self.is_valid(change_code)
-            and change_code in ["U", "H", "E", "G", "L", "M"]
-            and self.is_valid(decision_date)
+        # =========================
+        # 🔥 61b (RULE)
+        # =========================
+        if lendingAreaInd == 0:
+            self.trigger(policies, 61, "prec61b")
+
+        # =========================
+        # prec66
+        # =========================
+        if self.is_valid(ext) and self.is_valid(reason) and ext == "A" and reason == 38:
+            self.trigger(policies, 66, "prec66")
+
+        # =========================
+        # prec101
+        # =========================
+        if self.is_valid(ext) and self.is_valid(internal) and ext == "F" and internal in ["D", "O", "X"]:
+            self.trigger(policies, 101, "prec101")
+
+        # =========================
+        # prec106
+        # =========================
+        if self.is_valid(ext) and ext == "F" and (
+            not self.is_valid(internal) or internal not in ["D", "O", "X"]
         ):
-            data["daysSncAnyCLD"] = self.calculate_days(decision_date, change_date)
+            self.trigger(policies, 106, "prec106")
 
-        # -------------------------
-        # PREC 6 - daysSncAnyLineChange (not used)
-        # -------------------------
-        if (
-            self.is_valid(change_date)
-            and self.is_valid(decision_date)
+        # =========================
+        # prec111
+        # =========================
+        if self.is_valid(internal) and internal in ["B", "I", "Z"]:
+            self.trigger(policies, 111, "prec111")
+
+        # =========================
+        # prec116
+        # =========================
+        if self.is_valid(ext) and ext in ["C", "E"]:
+            self.trigger(policies, 116, "prec116")
+
+        # =========================
+        # prec126
+        # =========================
+        if self.is_valid(internal) and internal in ["D", "X"] and (
+            not self.is_valid(ext) or ext != "F"
         ):
-            data["daysSncAnyLineChange"] = self.calculate_days(decision_date, change_date)
+            self.trigger(policies, 126, "prec126")
 
-        # -------------------------
-        # PREC 7 - daysSncAnyCLI (not used)
-        # -------------------------
-        if (
-            self.is_valid(change_date)
-            and self.is_valid(change_code)
-            and change_code in ["I", "M", "P", "Q", "K", "Z", "J"]
-            and self.is_valid(decision_date)
-        ):
-            data["daysSncAnyCLI"] = self.calculate_days(decision_date, change_date)
+        # =========================
+        # 🔥 PREC 4,5,171 ONLY FOR RCLI
+        # =========================
+        if data.get("rcliRequested"):
 
-        # -------------------------
-        # PREC 5 - lineChgDelta
-        # -------------------------
-        if (
-            self.is_valid(credit_limit)
-            and self.is_valid(change_amount)
-        ):
-            data["lineChgDelta"] = credit_limit - change_amount
+            decision_date = data.get("decisionDate")
+            change_date = data.get("creditLineChangeDate")
+            change_code = data.get("creditLineChangeCode")
 
-        logger.info(f"Calculated Fields: {data}")
+            credit_limit = data.get("creditLimitAmount")
+            change_amount = data.get("creditLineChangeAmount")
 
-        return data
+            daysSncAnyCLD = -999
+            lineChgDelta = 0
 
+            # PREC 4
+            if (
+                self.is_valid(change_date)
+                and self.is_valid(change_code)
+                and change_code in ["U", "H", "E", "G", "L", "M"]
+                and self.is_valid(decision_date)
+            ):
+                daysSncAnyCLD = self.calculate_days(decision_date, change_date)
 
+            # PREC 5
+            if self.is_valid(credit_limit) and self.is_valid(change_amount):
+                lineChgDelta = credit_limit - change_amount
 
+            # prec171
+            if (
+                daysSncAnyCLD != -999
+                and 0 <= daysSncAnyCLD <= 180
+                and lineChgDelta < 0
+            ):
+                self.trigger(policies, 171, "prec171")
+
+        else:
+            logger.info("Skipping PREC 4/5/171 - Not RCLI")
+
+        return policies
 
 
 from utils.logger import get_logger
-from utils.exceptions import EngineExecutionError
-
-from engine.input_processor import InputProcessor
-from engine.derived_fields import DerivedFields
 
 from engine.policy_engine.policy1 import Policy1Engine
 from engine.policy_engine.policy2 import Policy2Engine
 
-from engine.calculations.policy2_calculations import Policy2Calculations
-
 from engine.lookup.policy_lookup import PolicyLookup
 from engine.execution.policy_execution import PolicyExecution
-
 from engine.decision.decision_engine import DecisionEngine
-from engine.utils.dedup import deduplicate_policies
-from engine.utils.sorting import sort_policies_by_rank
 
 logger = get_logger("EngineRunner")
 
 
 class EngineRunner:
 
-    def __init__(self):
-        self.input_processor = InputProcessor()
-        self.derived_fields = DerivedFields()
-
+    def __init__(self, lending_table):
         self.policy1 = Policy1Engine()
-        self.policy2 = Policy2Engine()
-
-        self.calculations = Policy2Calculations()
+        self.policy2 = Policy2Engine(lending_table)
 
         self.lookup = PolicyLookup()
         self.execution = PolicyExecution()
-        self.decision_engine = DecisionEngine()
+        self.decision = DecisionEngine()
 
-    def run(self, raw_request: dict):
+    def run(self, data):
 
-        try:
-            logger.info("===== START ENGINE RUN =====")
+        logger.info("===== ENGINE START =====")
 
-            # -------------------------
-            # Step 1: Input Processing
-            # -------------------------
-            data = self.input_processor.process(raw_request)
+        # Step 1: Policy1
+        p1 = self.policy1.evaluate(data)
+        p1 = self.lookup.enrich(p1)
+        p1 = self.execution.apply(p1, data)
 
-            # -------------------------
-            # Step 2: Derived Fields
-            # -------------------------
-            data = self.derived_fields.compute(data)
+        # Step 2: FAL check
+        has_fal = any(p.get("policyStatus") == "FAL" for p in p1)
 
-            # -------------------------
-            # Step 3: Policy1 (PreQual)
-            # -------------------------
-            p1 = self.policy1.evaluate(data)
+        if has_fal:
+            logger.info("FAL detected → Skipping Policy2")
+            policies = p1
+        else:
+            # Step 3: Policy2
+            p2 = self.policy2.evaluate(data)
+            p2 = self.lookup.enrich(p2)
+            p2 = self.execution.apply(p2, data)
 
-            # -------------------------
-            # Step 4: Lookup + Execution for Policy1
-            # -------------------------
-            p1_lookup = self.lookup.enrich(p1)
-            p1_exec = self.execution.apply(p1_lookup, data)
+            policies = p1 + p2
 
-            # -------------------------
-            # Step 5: FAL Check
-            # -------------------------
-            has_fal = any(p.get("policyStatus") == "FAL" for p in p1_exec)
+        # Step 4: Final Decision
+        decision = self.decision.decide(policies)
 
-            if has_fal:
-                logger.info("FAL detected → Skipping Policy2")
-                policies = p1_exec
+        logger.info("===== ENGINE END =====")
 
-            else:
-                logger.info("No FAL → Proceeding to Policy2")
-
-                # -------------------------
-                # Step 6: Policy2 Calculations
-                # -------------------------
-                data = self.calculations.compute(data)
-
-                # -------------------------
-                # Step 7: Policy2 Rules
-                # -------------------------
-                p2 = self.policy2.evaluate(data)
-
-                # -------------------------
-                # Step 8: Lookup + Execution for Policy2
-                # -------------------------
-                p2_lookup = self.lookup.enrich(p2)
-                p2_exec = self.execution.apply(p2_lookup, data)
-
-                # Merge Policy1 + Policy2
-                policies = p1_exec + p2_exec
-
-            # -------------------------
-            # Step 9: Deduplicate Policies
-            # -------------------------
-            policies = deduplicate_policies(policies)
-
-            # -------------------------
-            # Step 10: Sort by Rank
-            # -------------------------
-            policies = sort_policies_by_rank(policies)
-
-            # -------------------------
-            # Step 11: Final Decision
-            # -------------------------
-            decision = self.decision_engine.decide(policies)
-
-            logger.info("===== END ENGINE RUN =====")
-
-            return {
-                "decision": decision,
-                "policies": policies
-            }
-
-        except Exception as e:
-            logger.exception("Engine execution failed")
-            raise EngineExecutionError("Engine failed to process request")
+        return {
+            "decision": decision,
+            "policies": policies
+        }
 
 
 
-
-
-
-class PolicyExecution:
-
-    def apply(self, policies, data):
-
-        results = []
-
-        for policy in policies:
-            code = policy["policyCode"]
-
-            matching_rows = [
-                row for row in self.execution_table
-                if row["policyCode"] == code
-            ]
-
-            selected_row = None
-
-            for row in matching_rows:
-
-                # Condition checks
-                hv = row.get("highValueInd")
-                hs = row.get("highSpendInd")
-                mf = row.get("missingAllFicoReasons")
-
-                if hv is not None and hv != data.get("highValueInd"):
-                    continue
-
-                if hs is not None and hs != data.get("highSpendInd"):
-                    continue
-
-                if mf is not None and mf != data.get("missingAllFicoReasons"):
-                    continue
-
-                selected_row = row
-                break
-
-            # Fallback row (default case)
-            if not selected_row:
-                for row in matching_rows:
-                    if (
-                        row.get("highValueInd") is None and
-                        row.get("highSpendInd") is None and
-                        row.get("missingAllFicoReasons") is None
-                    ):
-                        selected_row = row
-                        break
-
-            if selected_row:
-                results.append({
-                    **policy,
-                    "policyStatus": selected_row["policyStatus"],
-                    "policyRank": selected_row["policyRank"],
-                    "policyRsnCode": selected_row["policyRsnCode"]
-                })
-
-        return results
