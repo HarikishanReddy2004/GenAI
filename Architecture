@@ -1,0 +1,151 @@
+credit-decision-validator/
+│
+├── README.md
+├── requirements.txt
+├── .env
+├── main.py
+│
+├── config_ingestion/                # 🔴 Input processing layer
+│   ├── excel_loader.py
+│   ├── pdf_parser.py
+│   ├── yaml_loader.py
+│   ├── config_builder.py
+│   ├── schema_validator.py         # validate excel/yaml structure
+│   └── __init__.py
+│
+├── config/                          # 🟡 Generated structured configs
+│   ├── policy1_rules.json
+│   ├── policy2_rules.json
+│   ├── lending_tables.json
+│   ├── lookup_table.json
+│   ├── execution_table.json
+│   ├── decision_logic.json
+│   ├── fico_spec.json              # YAML converted
+│   └── metadata.json               # versioning, timestamps
+│
+├── engine/                          # 🔵 Deterministic core engine
+│   ├── __init__.py
+│   │
+│   ├── input_processor.py          # extract + normalize request
+│   ├── derived_fields.py           # lendingAreaInd, days calc
+│   │
+│   ├── policy_engine/
+│   │   ├── policy1.py
+│   │   ├── policy2.py
+│   │   ├── rule_evaluator.py       # generic rule executor
+│   │   └── __init__.py
+│   │
+│   ├── lookup/
+│   │   ├── policy_lookup.py
+│   │   └── __init__.py
+│   │
+│   ├── execution/
+│   │   ├── policy_execution.py     # rank resolution (conditions)
+│   │   ├── deduplication.py
+│   │   ├── sorting.py
+│   │   └── __init__.py
+│   │
+│   ├── decision/
+│   │   ├── decision_engine.py      # DCL / FAL / PASS / RVW
+│   │   └── __init__.py
+│   │
+│   ├── output_formatter.py         # final response struct
+│   └── engine_runner.py            # orchestrates full flow
+│
+├── agents/                          # 🧠 AI + MCP Agents
+│   ├── __init__.py
+│   │
+│   ├── base_agent.py               # common agent class
+│   │
+│   ├── scenario_agent.py           # generates scenarios (AI)
+│   ├── comparator_agent.py         # compares expected vs actual
+│   ├── explainer_agent.py          # LLM explanations
+│   ├── report_agent.py             # generates reports
+│   │
+│   ├── orchestrator_agent.py       # MCP-style controller
+│   └── memory_manager.py           # context handling (optional)
+│
+├── tools/                           # 🛠 MCP tools (callable by agents)
+│   ├── __init__.py
+│   │
+│   ├── jsonl_builder.py            # convert scenarios → JSONL
+│   ├── api_executor.py             # call FICO API
+│   ├── response_parser.py          # parse JSONL response
+│   ├── validation_tool.py          # wraps engine
+│   └── comparison_tool.py          # structured diff
+│
+├── pipelines/                       # 🔁 End-to-end workflows
+│   ├── __init__.py
+│   │
+│   ├── scenario_pipeline.py        # generate → JSONL
+│   ├── execution_pipeline.py       # call API
+│   ├── validation_pipeline.py      # expected vs actual
+│   ├── reporting_pipeline.py       # final output
+│   └── full_pipeline.py            # master pipeline
+│
+├── models/                          # 📦 Data models (schemas)
+│   ├── __init__.py
+│   │
+│   ├── request_model.py            # input schema
+│   ├── response_model.py           # API response schema
+│   ├── policy_model.py             # policy object
+│   ├── scenario_model.py           # test scenario
+│   └── result_model.py             # validation result
+│
+├── utils/                           # ⚙️ Shared utilities
+│   ├── __init__.py
+│   │
+│   ├── logger.py
+│   ├── exceptions.py
+│   ├── constants.py
+│   ├── helpers.py
+│   ├── date_utils.py
+│   └── config_loader.py            # loads JSON configs
+│
+├── data/                            # 📂 Runtime data
+│   ├── input/
+│   │   ├── scenarios.jsonl
+│   │   └── raw_requests.json
+│   │
+│   ├── output/
+│   │   ├── api_response.jsonl
+│   │   ├── validation_results.json
+│   │   └── reports/
+│   │
+│   └── logs/
+│       └── app.log
+│
+├── tests/                           # 🧪 Testing layer
+│   ├── __init__.py
+│   │
+│   ├── unit/
+│   │   ├── test_policy_engine.py
+│   │   ├── test_execution.py
+│   │   └── test_decision.py
+│   │
+│   ├── integration/
+│   │   ├── test_api_flow.py
+│   │   └── test_full_pipeline.py
+│   │
+│   └── test_data/
+│       └── sample_inputs.json
+│
+├── notebooks/                       # 📊 Optional analysis
+│   └── exploration.ipynb
+│
+├── deployment/                      # 🚀 CI/CD + deployment
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── kubernetes.yaml
+│   └── ci_pipeline.yml
+│
+├── docs/                            # 📘 Documentation
+│   ├── architecture.md
+│   ├── api_usage.md
+│   ├── rule_mapping.md
+│   └── decision_flow.md
+│
+└── ui/                              # 🖥 Frontend (optional)
+    ├── app.py (Streamlit / FastAPI)
+    ├── components/
+    └── pages/
