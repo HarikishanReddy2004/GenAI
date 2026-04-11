@@ -1,0 +1,122 @@
+from utils.logger import get_logger
+from utils.constants import UNAVAILABLE_VALUES
+from utils.exceptions import RuleEvaluationError
+
+logger = get_logger("Policy2Engine")
+
+
+class Policy2Engine:
+
+    def __init__(self):
+        self.policies_triggered = []
+
+    def is_valid(self, val):
+        return val not in UNAVAILABLE_VALUES
+
+    def trigger_policy(self, code):
+        logger.info(f"Policy Triggered: {code}")
+        self.policies_triggered.append({"policyCode": code})
+
+    def evaluate(self, data: dict):
+
+        try:
+            logger.info("Starting Policy 2 Evaluation")
+
+            ext = data.get("externalStatusCode")
+            ext_rsn = data.get("externalStatusReasonCode")
+            intl = data.get("internalStatusCode")
+            lending = data.get("lendingAreaInd")
+            days = data.get("daysSncAnyCLD")
+            delta = data.get("lineChgDelta")
+
+            # -------------------------
+            # prec61 - Lending Area
+            # -------------------------
+            if self.is_valid(lending) and lending == 0:
+                self.trigger_policy(61)
+
+            # -------------------------
+            # prec66 - Fraud A-38
+            # -------------------------
+            if (
+                self.is_valid(ext)
+                and self.is_valid(ext_rsn)
+                and ext == "A"
+                and ext_rsn == 38
+            ):
+                self.trigger_policy(66)
+
+            # -------------------------
+            # prec101 - Frozen (DQ/OL)
+            # -------------------------
+            if (
+                self.is_valid(ext)
+                and self.is_valid(intl)
+                and ext == "F"
+                and intl in ["D", "O", "X"]
+            ):
+                self.trigger_policy(101)
+
+            # -------------------------
+            # prec106 - Frozen (Other)
+            # -------------------------
+            if (
+                self.is_valid(ext)
+                and ext == "F"
+                and (
+                    not self.is_valid(intl)
+                    or intl not in ["D", "O", "X"]
+                )
+            ):
+                self.trigger_policy(106)
+
+            # -------------------------
+            # prec111 - Bankrupt / Charge-off
+            # -------------------------
+            if (
+                self.is_valid(ext)
+                and self.is_valid(intl)
+                and intl in ["B", "I", "Z"]
+            ):
+                self.trigger_policy(111)
+
+            # -------------------------
+            # prec116 - Closed
+            # -------------------------
+            if (
+                self.is_valid(ext)
+                and ext in ["C", "E"]
+            ):
+                self.trigger_policy(116)
+
+            # -------------------------
+            # prec126 - Delinquent
+            # -------------------------
+            if (
+                self.is_valid(intl)
+                and intl in ["D", "X"]
+                and (
+                    not self.is_valid(ext)
+                    or ext != "F"
+                )
+            ):
+                self.trigger_policy(126)
+
+            # -------------------------
+            # prec171 - Recent Line Change
+            # -------------------------
+            if (
+                self.is_valid(days)
+                and self.is_valid(delta)
+                and 0 <= days <= 180
+                and delta < 0
+            ):
+                self.trigger_policy(171)
+
+            logger.info(f"Policies Triggered: {self.policies_triggered}")
+
+            return self.policies_triggered
+
+        except Exception as e:
+            logger.exception("Error evaluating Policy 2 rules")
+            raise RuleEvaluationError("Policy 2 evaluation failed")
