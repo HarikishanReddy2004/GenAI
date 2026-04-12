@@ -1,0 +1,323 @@
+{
+  "inputSchema": [
+    {
+      "attributeName": "externalStatusCode",
+      "type": "STRING",
+      "length": 1,
+      "description": "External status code"
+    },
+    {
+      "attributeName": "externalStatusReasonCode",
+      "type": "NUMBER",
+      "length": 3,
+      "description": "External reason code"
+    },
+    {
+      "attributeName": "internalStatusCode",
+      "type": "STRING",
+      "length": 1,
+      "description": "Internal status code"
+    },
+    {
+      "attributeName": "addressSubdivisionOneText",
+      "type": "STRING",
+      "length": 50,
+      "description": "State / region"
+    },
+    {
+      "attributeName": "creditLineChangeDate",
+      "type": "STRING",
+      "length": 10,
+      "description": "Credit line change date"
+    },
+    {
+      "attributeName": "creditLineChangeAmount",
+      "type": "NUMBER",
+      "length": 10,
+      "description": "Credit line change amount"
+    },
+    {
+      "attributeName": "creditLimitAmount",
+      "type": "NUMBER",
+      "length": 10,
+      "description": "Credit limit amount"
+    },
+    {
+      "attributeName": "creditLineChangeCode",
+      "type": "STRING",
+      "length": 1,
+      "description": "Credit line change code"
+    },
+    {
+      "attributeName": "decisionDate",
+      "type": "STRING",
+      "length": 25,
+      "description": "Decision timestamp"
+    },
+    {
+      "attributeName": "rcliRequested",
+      "type": "BOOLEAN",
+      "length": 1,
+      "description": "RCLI flag"
+    },
+    {
+      "attributeName": "alternateLanguageCode",
+      "type": "STRING",
+      "length": 2,
+      "description": "Language preference EN/SP"
+    },
+    {
+      "attributeName": "decisionStageRCLI",
+      "type": "STRING",
+      "length": 4,
+      "description": "Decision stage"
+    },
+    {
+      "attributeName": "decisionStatus",
+      "type": "STRING",
+      "length": 4,
+      "description": "System decision status"
+    },
+    {
+      "attributeName": "channel",
+      "type": "STRING",
+      "length": 1,
+      "description": "Channel"
+    },
+    {
+      "attributeName": "environment",
+      "type": "STRING",
+      "length": 1,
+      "description": "Environment"
+    },
+    {
+      "attributeName": "reqLineChgType",
+      "type": "STRING",
+      "length": 1,
+      "description": "Request line change type"
+    },
+    {
+      "attributeName": "subCnt",
+      "type": "NUMBER",
+      "length": 2,
+      "description": "Submission count"
+    }
+  ],
+
+  "outputSchema": [
+    {
+      "attributeName": "decisionStatus",
+      "type": "STRING",
+      "length": 4,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "decisionRecommendation",
+      "type": "STRING",
+      "length": 5,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "decisionDate",
+      "type": "STRING",
+      "length": 25,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "rulesVersion",
+      "type": "STRING",
+      "length": 15,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "requestDate",
+      "type": "STRING",
+      "length": 8,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "channel",
+      "type": "STRING",
+      "length": 1,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "environment",
+      "type": "STRING",
+      "length": 1,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "reqLineChgType",
+      "type": "STRING",
+      "length": 1,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "subCnt",
+      "type": "NUMBER",
+      "length": 2,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "letterid",
+      "type": "STRING",
+      "length": 15,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "enLetterDate",
+      "type": "STRING",
+      "length": 25,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "spLetterDate",
+      "type": "STRING",
+      "length": 25,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "freezeLetterIndicator",
+      "type": "INTEGER",
+      "length": 1,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "errorInd",
+      "type": "BOOLEAN",
+      "length": 1,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "autoDcsnSwitch",
+      "type": "INTEGER",
+      "length": 1,
+      "precOut": "Y"
+    },
+
+    {
+      "attributeName": "policyCode",
+      "type": "STRING",
+      "length": 6,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "policyDescription",
+      "type": "STRING",
+      "length": 256,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "policyCategory",
+      "type": "STRING",
+      "length": 50,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "policyType",
+      "type": "STRING",
+      "length": 50,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "policyStatus",
+      "type": "STRING",
+      "length": 10,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "policyRank",
+      "type": "INTEGER",
+      "length": 4,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "policyRsnCode",
+      "type": "STRING",
+      "length": 6,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "policyRsnDupeInd",
+      "type": "INTEGER",
+      "length": 1,
+      "precOut": "Y"
+    },
+
+    {
+      "attributeName": "aaRsn1",
+      "type": "STRING",
+      "length": 4,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "aaRsn2",
+      "type": "STRING",
+      "length": 4,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "aaRsn3",
+      "type": "STRING",
+      "length": 4,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "aaRsn4",
+      "type": "STRING",
+      "length": 4,
+      "precOut": "Y"
+    },
+
+    {
+      "attributeName": "aaTxtEN1",
+      "type": "STRING",
+      "length": 220,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "aaTxtEN2",
+      "type": "STRING",
+      "length": 220,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "aaTxtEN3",
+      "type": "STRING",
+      "length": 220,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "aaTxtEN4",
+      "type": "STRING",
+      "length": 220,
+      "precOut": "Y"
+    },
+
+    {
+      "attributeName": "aaTxtSP1",
+      "type": "STRING",
+      "length": 220,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "aaTxtSP2",
+      "type": "STRING",
+      "length": 220,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "aaTxtSP3",
+      "type": "STRING",
+      "length": 220,
+      "precOut": "Y"
+    },
+    {
+      "attributeName": "aaTxtSP4",
+      "type": "STRING",
+      "length": 220,
+      "precOut": "Y"
+    }
+  ]
+}
