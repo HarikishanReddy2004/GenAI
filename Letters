@@ -1,0 +1,409 @@
+from datetime import datetime
+from utils.logger import get_logger
+
+logger = get_logger("Letters")
+
+
+class Letters:
+
+    # -----------------------------------
+    # LETTER ID RULE TABLE
+    # -----------------------------------
+    LETTER_ID_RULES = {
+        ("PREC", "DCLN", "EN"): "Q9R35RCLI",
+        ("PREC", "DCLN", "SP"): "Q9435RCLIS",
+    }
+
+    # -----------------------------------
+    # MONTH TRANSLATION TABLE
+    # -----------------------------------
+    MONTH_MAP = {
+        1: ("January", "Enero"),
+        2: ("February", "Febrero"),
+        3: ("March", "Marzo"),
+        4: ("April", "Abril"),
+        5: ("May", "Mayo"),
+        6: ("June", "Junio"),
+        7: ("July", "Julio"),
+        8: ("August", "Agosto"),
+        9: ("September", "Septiembre"),
+        10: ("October", "Octubre"),
+        11: ("November", "Noviembre"),
+        12: ("December", "Diciembre"),
+    }
+
+    # -----------------------------------
+    # RESOLVE LETTER ID
+    # -----------------------------------
+    def get_letter_id(self, stage, status, lang):
+        return self.LETTER_ID_RULES.get(
+            (stage, status, lang),
+            "NOID"
+        )
+
+    # -----------------------------------
+    # FORMAT DATE
+    # -----------------------------------
+    def format_date(self, date_str, lang):
+
+        if not date_str:
+            return None
+
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+
+        en_month, sp_month = self.MONTH_MAP[dt.month]
+
+        if lang == "EN":
+            return f"{en_month} {dt.day}, {dt.year}"
+        else:
+            return f"{dt.day} de {sp_month}, {dt.year}"
+
+    # -----------------------------------
+    # MAIN EXECUTION
+    # -----------------------------------
+    def execute(self, data, decision_details, aa):
+
+        logger.info("Letters module started")
+
+        letters = []
+
+        stage = data.get("decisionStageRCLI", "PREC")
+        status = data.get("decisionStatus", "UNKNOWN")
+        lang = data.get("alternateLanguageCode", "EN")
+        decision_date = data.get("decisionDate")
+
+        # -----------------------------------
+        # LETTER ID
+        # -----------------------------------
+        letter_id = self.get_letter_id(stage, status, lang)
+
+        letters.append({
+            "name": "letterCode",
+            "value": letter_id
+        })
+
+        # -----------------------------------
+        # LANGUAGE CODE
+        # -----------------------------------
+        letters.append({
+            "name": "alternateLanguageCode",
+            "value": lang
+        })
+
+        # -----------------------------------
+        # LETTER DATE
+        # -----------------------------------
+        formatted_date = self.format_date(decision_date, lang)
+
+        if formatted_date:
+            letters.append({
+                "name": "letterDateText",
+                "value": formatted_date
+            })
+
+        # -----------------------------------
+        # AA TEXT MAPPING (UP TO 4)
+        # -----------------------------------
+        for i in range(1, 5):
+
+            code_key = f"aaRsn{i}"
+
+            if code_key not in aa or not aa[code_key]:
+                continue
+
+            if lang == "EN":
+                txt_key = f"aaTxtEN{i}"
+                field_name = f"DENIAL_REASON{'' if i == 1 else i}"
+            else:
+                txt_key = f"aaTxtSP{i}"
+                field_name = f"DENIAL_REASON{'' if i == 1 else i}"
+
+            letters.append({
+                "name": field_name,
+                "value": aa.get(txt_key)
+            })
+
+        logger.info("Letters module completed")
+
+        return letters
+
+
+
+
+from utils.logger import get_logger
+
+from engine.input_processor import InputProcessor
+from engine.derived_fields import DerivedFields
+
+from engine.policy_engine.policy1 import Policy1Engine
+from engine.policy_engine.policy2 import Policy2Engine
+
+from engine.lookup.policy_lookup import PolicyLookup
+from engine.execution.policy_execution import PolicyExecution
+from engine.execution.deduplication import deduplicate
+from engine.execution.sorting import sort_by_rank
+
+from engine.decision.decision_engine import DecisionEngine
+
+from engine.execution.letters import Letters
+from engine.execution.memos import Memos
+from engine.execution.adverse_actions import AdverseActions
+
+from engine.response_builder import ResponseBuilder
+
+logger = get_logger("EngineRunner")
+
+
+class EngineRunner:
+
+    def run(self, request_json):
+
+        logger.info("========== ENGINE START ==========")
+
+        # --------------------------------------------------
+        # 1. INPUT PROCESSING
+        # --------------------------------------------------
+        processor = InputProcessor()
+        data = processor.process(request_json)
+
+        # --------------------------------------------------
+        # 2. DERIVED FIELDS
+        # --------------------------------------------------
+        derived = DerivedFields()
+        data = derived.process(data)
+
+        # --------------------------------------------------
+        # 3. POLICY 1 EXECUTION
+        # --------------------------------------------------
+        policy1_engine = Policy1Engine()
+        p1 = policy1_engine.evaluate(data)
+
+        # --------------------------------------------------
+        # 4. LOOKUP ENRICHMENT
+        # --------------------------------------------------
+        lookup = PolicyLookup()
+        p1 = lookup.enrich(p1)
+
+        # --------------------------------------------------
+        # 5. EXECUTION (STATUS ASSIGNMENT)
+        # --------------------------------------------------
+        execution = PolicyExecution()
+        p1_exec = execution.apply(p1, data)
+
+        # --------------------------------------------------
+        # 6. CHECK FOR FAL → SKIP POLICY 2
+        # --------------------------------------------------
+        has_fal = any(p.get("policyStatus") == "FAL" for p in p1_exec)
+
+        if has_fal:
+            logger.info("FAL detected → Skipping Policy2")
+            policies = p1_exec
+
+        else:
+            logger.info("No FAL → Running Policy2")
+
+            policy2_engine = Policy2Engine()
+            p2 = policy2_engine.evaluate(data)
+
+            p2 = lookup.enrich(p2)
+            p2_exec = execution.apply(p2, data)
+
+            policies = p1_exec + p2_exec
+
+        # --------------------------------------------------
+        # 7. DEDUPLICATION
+        # --------------------------------------------------
+        policies = deduplicate(policies)
+
+        # --------------------------------------------------
+        # 8. SORTING (RANK + PRIORITY)
+        # --------------------------------------------------
+        policies = sort_by_rank(policies)
+
+        # --------------------------------------------------
+        # 9. DECISION ENGINE
+        # --------------------------------------------------
+        decision_engine = DecisionEngine()
+        decision = decision_engine.decide(policies)
+
+        # --------------------------------------------------
+        # 10. ADVERSE ACTIONS
+        # --------------------------------------------------
+        aa_engine = AdverseActions()
+        aa = aa_engine.build(policies) if decision == "DCLN" else {}
+
+        # --------------------------------------------------
+        # 11. LETTERS MODULE
+        # --------------------------------------------------
+        letters_engine = Letters()
+        letters = letters_engine.execute(
+            data=data,
+            decision_details={},
+            aa=aa
+        )
+
+        # --------------------------------------------------
+        # 12. MEMOS MODULE
+        # --------------------------------------------------
+        memos_engine = Memos()
+        memos = memos_engine.execute(
+            data=data,
+            decision=decision,
+            policies=policies,
+            aa=aa
+        )
+
+        # --------------------------------------------------
+        # 13. FINAL RESPONSE BUILD
+        # --------------------------------------------------
+        builder = ResponseBuilder()
+
+        response = builder.build(
+            data=data,
+            decision=decision,
+            policies=policies,
+            aa=aa,
+            letters=letters,
+            memos=memos
+        )
+
+        logger.info("========== ENGINE END ==========")
+
+        return response
+
+
+
+from utils.logger import get_logger
+
+logger = get_logger("DecisionEngine")
+
+
+class DecisionEngine:
+
+    def decide(self, policies):
+
+        logger.info("Starting decision evaluation")
+
+        if not policies:
+            logger.info("No policies found → PASS")
+            return "PASS"
+
+        statuses = [p.get("policyStatus") for p in policies if p.get("policyStatus")]
+
+        # -----------------------------------
+        # ERROR CASE (future extension hook)
+        # -----------------------------------
+        if any(p.get("errorInd") for p in policies):
+            logger.error("Error flag detected → ERR")
+            return "ERR"
+
+        # -----------------------------------
+        # DCL (DECLINE - HIGHEST PRIORITY)
+        # -----------------------------------
+        if "DCL" in statuses:
+            logger.info("DCL policy found → DCLN decision")
+            return "DCLN"
+
+        # -----------------------------------
+        # FAIL CASE
+        # -----------------------------------
+        if "FAL" in statuses:
+            logger.info("FAL policy found → FAIL decision")
+            return "FAIL"
+
+        # -----------------------------------
+        # REVIEW CASE (if needed later)
+        # -----------------------------------
+        if "RVW" in statuses:
+            logger.info("RVW policy found → REVIEW decision")
+            return "REVIEW"
+
+        # -----------------------------------
+        # DEFAULT PASS
+        # -----------------------------------
+        logger.info("No blocking policies → PASS")
+        return "PASS"
+
+
+class OutputSchemaValidator:
+
+    def validate(self, output, schema):
+
+        validated_output = {}
+
+        for field in schema:
+
+            name = field["attributeName"]
+            expected_type = field["type"]
+            max_length = field.get("length")
+            prec_out = field.get("precOut", "Y")
+
+            value = output.get(name)
+
+            if value is None:
+                continue
+
+            # --------------------------
+            # TYPE VALIDATION
+            # --------------------------
+            if expected_type == "STRING":
+                value = str(value)
+
+            elif expected_type == "NUMBER":
+                try:
+                    value = int(value)
+                except:
+                    pass
+
+            elif expected_type == "BOOLEAN":
+                value = bool(value)
+
+            # --------------------------
+            # LENGTH VALIDATION
+            # --------------------------
+            if max_length and isinstance(value, str):
+                value = value[:int(max_length)]
+
+            # --------------------------
+            # PREC OUT FILTER
+            # --------------------------
+            if prec_out == "Y":
+                validated_output[name] = value
+
+        return validated_output
+
+
+class InputSchemaValidator:
+
+    def validate(self, input_data, schema):
+
+        errors = []
+
+        for field in schema:
+
+            name = field["attributeName"]
+            expected_type = field["type"]
+            max_length = field.get("length")
+
+            value = input_data.get(name)
+
+            if value is None:
+                continue
+
+            # TYPE CHECK
+            if expected_type == "STRING" and not isinstance(value, str):
+                errors.append(f"{name} must be STRING")
+
+            # LENGTH CHECK
+            if max_length and isinstance(value, str):
+                if len(value) > int(max_length):
+                    errors.append(f"{name} exceeds length")
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors
+        }
+
+
+
+
