@@ -1,0 +1,208 @@
+from utils.logger import get_logger
+from utils.constants import UNAVAILABLE_VALUES
+
+logger = get_logger("AdverseAction")
+
+
+class AdverseAction:
+
+    def is_valid(self, val):
+        return val not in UNAVAILABLE_VALUES
+
+
+    def build_reason_codes(self, policies):
+        """
+        Implements FULL AA logic including:
+        - deduped policies only
+        - top 4 ranked policies
+        - CBR handling (simplified for MVP1 unless fico provided)
+        """
+
+        valid_policies = [
+            p for p in policies
+            if self.is_valid(p.get("policyRsnCode"))
+        ]
+
+        # sort by rank
+        valid_policies.sort(key=lambda x: x.get("policyRank", 999))
+
+        aa = {
+            "aaRsn1": None,
+            "aaRsn2": None,
+            "aaRsn3": None,
+            "aaRsn4": None,
+        }
+
+        index = 1
+
+        for p in valid_policies:
+            if index > 4:
+                break
+
+            aa[f"aaRsn{index}"] = p.get("policyRsnCode")
+            index += 1
+
+        return aa
+
+
+    def build_text(self, aa_rsns, conv_table):
+        """
+        Maps AA codes → EN/SP text
+        """
+
+        aa_txt = {
+            "aaTxtEN1": None,
+            "aaTxtEN2": None,
+            "aaTxtEN3": None,
+            "aaTxtEN4": None,
+            "aaTxtSP1": None,
+            "aaTxtSP2": None,
+            "aaTxtSP3": None,
+            "aaTxtSP4": None,
+        }
+
+        mapping = {row["aaCode"]: row for row in conv_table}
+
+        for i in range(1, 5):
+            code = aa_rsns.get(f"aaRsn{i}")
+
+            if not code:
+                continue
+
+            row = mapping.get(code)
+
+            if row:
+                aa_txt[f"aaTxtEN{i}"] = row["Output (EN)"]
+                aa_txt[f"aaTxtSP{i}"] = row["Output (SP)"]
+
+        return aa_txt
+
+
+    def execute(self, policies, conv_table):
+        logger.info("Executing Adverse Action")
+
+        aa_rsns = self.build_reason_codes(policies)
+        aa_text = self.build_text(aa_rsns, conv_table)
+
+        return {
+            **aa_rsns,
+            **aa_text
+        }
+
+
+
+from datetime import datetime
+from utils.logger import get_logger
+
+logger = get_logger("Letters")
+
+
+class Letters:
+
+    def execute(self, data, decision_details, aa, letter_dates_table):
+
+        logger.info("Executing Letters Module")
+
+        letters = []
+
+        # letterCode
+        letters.append({
+            "name": "letterCode",
+            "value": decision_details.get("letterID", "NOID")
+        })
+
+        # language
+        lang = data.get("alternateLanguageCode", "EN")
+
+        letters.append({
+            "name": "alternateLanguageCode",
+            "value": lang
+        })
+
+        # date formatting
+        month_map = letter_dates_table  # {"01": "Jan", ...}
+
+        decision_date = datetime.strptime(data["decisionDate"], "%Y-%m-%d")
+
+        en_date = f"{month_map['EN'][decision_date.month]} {decision_date.day}, {decision_date.year}"
+        sp_date = f"{decision_date.day} de {month_map['SP'][decision_date.month]}, {decision_date.year}"
+
+        letter_date = en_date if lang == "EN" else sp_date
+
+        letters.append({
+            "name": "letterDateText",
+            "value": letter_date
+        })
+
+        # AA text mapping
+        for i in range(1, 5):
+            code = aa.get(f"aaRsn{i}")
+            if not code:
+                continue
+
+            if lang == "EN":
+                key = f"aaTxtEN{i}"
+                field = f"DENIAL_REASON{i if i > 1 else ''}"
+            else:
+                key = f"aaTxtSP{i}"
+                field = f"DENIAL_REASON{i if i > 1 else ''}"
+
+            letters.append({
+                "name": field,
+                "value": aa.get(key)
+            })
+
+        return letters
+
+
+from utils.logger import get_logger
+from utils.constants import UNAVAILABLE_VALUES
+
+logger = get_logger("Memos")
+
+
+class Memos:
+
+    def is_valid(self, val):
+        return val not in UNAVAILABLE_VALUES
+
+
+    def execute(self, decision_stage, decision_status, policies, decision_details, aa):
+
+        logger.info("Executing Memos Module")
+
+        memos = []
+
+        # MEMO 1
+        if decision_stage == "PREC" and decision_status == "FAIL":
+            highest_fal = min(
+                [p for p in policies if p.get("status") == "FAL"],
+                key=lambda x: x.get("policyRank", 999),
+                default=None
+            )
+
+            if highest_fal:
+                memos.append({
+                    "name": "Ineligible_Reason",
+                    "value": highest_fal.get("description")
+                })
+
+        # MEMO 2
+        if decision_stage == "PREC" and decision_status == "DCLN":
+            memos.append({
+                "name": "Decline_Letter_No",
+                "value": decision_details.get("letterID")
+            })
+
+        # MEMO 3-6 (AA codes)
+        for i in range(1, 5):
+            code = aa.get(f"aaRsn{i}")
+
+            if self.is_valid(code):
+                memos.append({
+                    "name": f"Denial_Reason_Code{i}",
+                    "value": code
+                })
+
+        return memos
+
