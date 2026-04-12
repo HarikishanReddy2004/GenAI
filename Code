@@ -1,249 +1,113 @@
 from utils.logger import get_logger
-from utils.constants import UNAVAILABLE_VALUES
+from utils.config_loader import load_json
 
-logger = get_logger("Policy1Engine")
-
-
-class Policy1Engine:
-
-    def is_valid(self, val):
-        return val not in UNAVAILABLE_VALUES
-
-    def trigger(self, policies, code, rule):
-        logger.info(f"Policy1 Triggered: {code} via {rule}")
-        policies.append({
-            "policyCode": code,
-            "rule": rule
-        })
-
-    def evaluate(self, data):
-
-        policies = []
-
-        ext = data.get("externalStatusCode")
-        reason = data.get("externalStatusReasonCode")
-        transfer = data.get("accountTransferCode")
-
-        # prec21
-        if self.is_valid(ext) and self.is_valid(reason) and ext == "A" and reason == 15:
-            self.trigger(policies, 21, "prec21")
-
-        # prec26
-        if self.is_valid(ext) and self.is_valid(reason) and ext == "A" and reason == 63:
-            self.trigger(policies, 26, "prec26")
-
-        # prec41
-        if self.is_valid(transfer) and transfer in [1, 3]:
-            self.trigger(policies, 41, "prec41")
-
-        # prec46
-        if self.is_valid(ext) and ext == "A" and (
-            not self.is_valid(reason) or reason not in [15, 38, 63]
-        ):
-            self.trigger(policies, 46, "prec46")
-
-        # prec51
-        if self.is_valid(ext) and ext in ["L", "U"]:
-            self.trigger(policies, 51, "prec51")
-
-        return policies
+logger = get_logger("PolicyExecution")
 
 
+class PolicyExecution:
 
-from datetime import datetime
-from utils.logger import get_logger
-from utils.constants import UNAVAILABLE_VALUES
+    def __init__(self):
+        self.execution_table = load_json("config/policy_execution.json")
 
-logger = get_logger("Policy2Engine")
+    def apply(self, policies, data):
+
+        results = []
+
+        for policy in policies:
+            code = policy["policyCode"]
+
+            matching_rows = [
+                row for row in self.execution_table
+                if row["policyCode"] == code
+            ]
+
+            selected_row = None
+
+            # Priority match
+            for row in matching_rows:
+                hv = row.get("highValueInd")
+                hs = row.get("highSpendInd")
+                mf = row.get("missingAllFicoReasons")
+
+                if hv is not None and hv != data.get("highValueInd"):
+                    continue
+                if hs is not None and hs != data.get("highSpendInd"):
+                    continue
+                if mf is not None and mf != data.get("missingAllFicoReasons"):
+                    continue
+
+                selected_row = row
+                break
+
+            # Fallback match (ALL NULL row)
+            if not selected_row:
+                for row in matching_rows:
+                    if (
+                        row.get("highValueInd") is None and
+                        row.get("highSpendInd") is None and
+                        row.get("missingAllFicoReasons") is None
+                    ):
+                        selected_row = row
+                        break
+
+            if selected_row:
+                results.append({
+                    **policy,
+                    "policyStatus": selected_row["policyStatus"],
+                    "policyRank": selected_row["policyRank"],
+                    "policyRsnCode": selected_row["policyRsnCode"]
+                })
+
+        logger.info(f"PolicyExecution done: {len(results)}")
+
+        return results
 
 
-class Policy2Engine:
+from collections import defaultdict
 
-    def __init__(self, lending_table):
-        self.lending_table = lending_table
 
-    def is_valid(self, val):
-        return val not in UNAVAILABLE_VALUES
+class Deduplication:
 
-    def trigger(self, policies, code, rule):
-        logger.info(f"Policy2 Triggered: {code} via {rule}")
-        policies.append({
-            "policyCode": code,
-            "rule": rule
-        })
+    def apply(self, policies):
 
-    def calculate_days(self, d1, d2):
-        try:
-            d1 = datetime.strptime(d1, "%Y-%m-%d")
-            d2 = datetime.strptime(d2, "%Y-%m-%d")
-            return (d1 - d2).days
-        except:
-            return -999
+        grouped = defaultdict(list)
 
-    def evaluate(self, data):
+        for p in policies:
+            rsn = p.get("policyRsnCode")
 
-        policies = []
+            # Ignore None / N/A
+            if rsn in [None, "N/A"]:
+                p["policyRsnDupInd"] = 0
+                continue
 
-        ext = data.get("externalStatusCode")
-        reason = data.get("externalStatusReasonCode")
-        internal = data.get("internalStatusCode")
+            grouped[rsn].append(p)
 
-        # =========================
-        # 🔥 61a (CALC)
-        # =========================
-        lendingAreaInd = 0
-        state = data.get("addressSubdivisionOneText")
+        for rsn, group in grouped.items():
 
-        if self.is_valid(state):
-            for row in self.lending_table:
-                if row["addressSubdivisionOneText"] == state:
-                    lendingAreaInd = row["lendingAreaInd"]
-                    break
+            # Sort by rank (lower is higher priority)
+            group.sort(key=lambda x: x.get("policyRank", 999999))
 
-        data["lendingAreaInd"] = lendingAreaInd
-
-        # =========================
-        # 🔥 61b (RULE)
-        # =========================
-        if lendingAreaInd == 0:
-            self.trigger(policies, 61, "prec61b")
-
-        # =========================
-        # prec66
-        # =========================
-        if self.is_valid(ext) and self.is_valid(reason) and ext == "A" and reason == 38:
-            self.trigger(policies, 66, "prec66")
-
-        # =========================
-        # prec101
-        # =========================
-        if self.is_valid(ext) and self.is_valid(internal) and ext == "F" and internal in ["D", "O", "X"]:
-            self.trigger(policies, 101, "prec101")
-
-        # =========================
-        # prec106
-        # =========================
-        if self.is_valid(ext) and ext == "F" and (
-            not self.is_valid(internal) or internal not in ["D", "O", "X"]
-        ):
-            self.trigger(policies, 106, "prec106")
-
-        # =========================
-        # prec111
-        # =========================
-        if self.is_valid(internal) and internal in ["B", "I", "Z"]:
-            self.trigger(policies, 111, "prec111")
-
-        # =========================
-        # prec116
-        # =========================
-        if self.is_valid(ext) and ext in ["C", "E"]:
-            self.trigger(policies, 116, "prec116")
-
-        # =========================
-        # prec126
-        # =========================
-        if self.is_valid(internal) and internal in ["D", "X"] and (
-            not self.is_valid(ext) or ext != "F"
-        ):
-            self.trigger(policies, 126, "prec126")
-
-        # =========================
-        # 🔥 PREC 4,5,171 ONLY FOR RCLI
-        # =========================
-        if data.get("rcliRequested"):
-
-            decision_date = data.get("decisionDate")
-            change_date = data.get("creditLineChangeDate")
-            change_code = data.get("creditLineChangeCode")
-
-            credit_limit = data.get("creditLimitAmount")
-            change_amount = data.get("creditLineChangeAmount")
-
-            daysSncAnyCLD = -999
-            lineChgDelta = 0
-
-            # PREC 4
-            if (
-                self.is_valid(change_date)
-                and self.is_valid(change_code)
-                and change_code in ["U", "H", "E", "G", "L", "M"]
-                and self.is_valid(decision_date)
-            ):
-                daysSncAnyCLD = self.calculate_days(decision_date, change_date)
-
-            # PREC 5
-            if self.is_valid(credit_limit) and self.is_valid(change_amount):
-                lineChgDelta = credit_limit - change_amount
-
-            # prec171
-            if (
-                daysSncAnyCLD != -999
-                and 0 <= daysSncAnyCLD <= 180
-                and lineChgDelta < 0
-            ):
-                self.trigger(policies, 171, "prec171")
-
-        else:
-            logger.info("Skipping PREC 4/5/171 - Not RCLI")
+            for i, policy in enumerate(group):
+                if i == 0:
+                    policy["policyRsnDupInd"] = 0
+                else:
+                    policy["policyRsnDupInd"] = 1
 
         return policies
 
 
-from utils.logger import get_logger
 
-from engine.policy_engine.policy1 import Policy1Engine
-from engine.policy_engine.policy2 import Policy2Engine
+class Sorting:
 
-from engine.lookup.policy_lookup import PolicyLookup
-from engine.execution.policy_execution import PolicyExecution
-from engine.decision.decision_engine import DecisionEngine
+    def apply(self, policies):
 
-logger = get_logger("EngineRunner")
-
-
-class EngineRunner:
-
-    def __init__(self, lending_table):
-        self.policy1 = Policy1Engine()
-        self.policy2 = Policy2Engine(lending_table)
-
-        self.lookup = PolicyLookup()
-        self.execution = PolicyExecution()
-        self.decision = DecisionEngine()
-
-    def run(self, data):
-
-        logger.info("===== ENGINE START =====")
-
-        # Step 1: Policy1
-        p1 = self.policy1.evaluate(data)
-        p1 = self.lookup.enrich(p1)
-        p1 = self.execution.apply(p1, data)
-
-        # Step 2: FAL check
-        has_fal = any(p.get("policyStatus") == "FAL" for p in p1)
-
-        if has_fal:
-            logger.info("FAL detected → Skipping Policy2")
-            policies = p1
-        else:
-            # Step 3: Policy2
-            p2 = self.policy2.evaluate(data)
-            p2 = self.lookup.enrich(p2)
-            p2 = self.execution.apply(p2, data)
-
-            policies = p1 + p2
-
-        # Step 4: Final Decision
-        decision = self.decision.decide(policies)
-
-        logger.info("===== ENGINE END =====")
-
-        return {
-            "decision": decision,
-            "policies": policies
-        }
+        return sorted(
+            policies,
+            key=lambda x: (
+                x.get("policyRsnDupInd", 0),
+                x.get("policyRank", 999999)
+            )
+        )
 
 
 
