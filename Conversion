@@ -1,67 +1,32 @@
-import pandas as pd
-import json
 import copy
-import re
 
-# -------------------------------
-# Find max index for arrays
-# -------------------------------
-def find_max_array_index(columns):
-    array_max = {}
-
-    for col in columns:
-        parts = col.split('.')
-        for part in parts:
-            if '#' in part:
-                key, idx = part.split('#')
-                idx = int(idx)
-                array_max[key] = max(array_max.get(key, 0), idx)
-
-    return array_max
-
-
-# -------------------------------
-# Expand arrays dynamically
-# -------------------------------
-def expand_arrays(template, array_max):
-    template = copy.deepcopy(template)
-
-    for key, max_size in array_max.items():
-        if key in template and isinstance(template[key], list):
-            
-            existing = template[key]
-
-            # Use first element as structure
-            base_structure = existing[0] if existing else {}
-
-            while len(template[key]) < max_size:
-                template[key].append(copy.deepcopy(base_structure))
-
-    return template
-
-
-# -------------------------------
-# Strict set with array support
-# -------------------------------
-def set_nested_value(data, keys, value):
+def set_value(data, keys, value):
     current = data
 
     for i, key in enumerate(keys):
 
+        # ARRAY CASE
         if '#' in key:
-            key, index = key.split('#')
-            index = int(index) - 1
+            key, idx = key.split('#')
+            idx = int(idx) - 1
 
-            if key not in current or not isinstance(current[key], list):
+            if key not in current:
                 return
 
-            if len(current[key]) <= index:
+            if not isinstance(current[key], list):
                 return
+
+            # AUTO EXPAND
+            while len(current[key]) <= idx:
+                current[key].append({})
 
             if i == len(keys) - 1:
-                current[key][index] = value
+                current[key][idx] = value
             else:
-                current = current[key][index]
+                # FIX: ensure dict
+                if current[key][idx] is None:
+                    current[key][idx] = {}
+                current = current[key][idx]
 
         else:
             if key not in current:
@@ -70,55 +35,24 @@ def set_nested_value(data, keys, value):
             if i == len(keys) - 1:
                 current[key] = value
             else:
-                if not isinstance(current[key], dict):
-                    return
+                #  CRITICAL FIX
+                if current[key] is None:
+                    current[key] = {}
                 current = current[key]
 
-
-# -------------------------------
-# Populate JSON per row
-# -------------------------------
-def populate_json(template, row_dict):
+def populate(template, row):
     result = copy.deepcopy(template)
 
-    for col, value in row_dict.items():
-        if pd.isna(value):
+    for col, value in row.items():
+        if value is None:
             continue
 
-        keys = col.split('.')
-        set_nested_value(result, keys, value)
+        keys = col.strip().split('.')
+
+        # AUTO HANDLE ROOT (application or not)
+        if "application" in result:
+            keys = ["application"] + keys
+
+        set_value(result, keys, value)
 
     return result
-
-
-# -------------------------------
-# MAIN
-# -------------------------------
-def excel_to_json(excel_path, template_path, output_path):
-
-    df = pd.read_excel(excel_path)
-
-    with open(template_path, 'r') as f:
-        template = json.load(f)
-
-    # Step 1: find max array size
-    array_max = find_max_array_index(df.columns)
-
-    results = []
-
-    for _, row in df.iterrows():
-
-        # Step 2: expand template per row
-        expanded_template = expand_arrays(template, array_max)
-
-        # Step 3: populate
-        row_dict = row.to_dict()
-        populated = populate_json(expanded_template, row_dict)
-
-        results.append(populated)
-
-    # Save
-    with open(output_path, 'w') as f:
-        json.dump(results, f, indent=4)
-
-    print(" Done!")
